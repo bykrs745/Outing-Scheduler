@@ -1,1 +1,1 @@
-# KAmp-Smart-Scheduler
+# Smart-Scheduler
