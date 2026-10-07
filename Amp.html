@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Gemini Audio Control Panel</title>
+<style>
+   /* 全体的なフォーカス・選択・ドラッグの完全抑止 */
+   body, #amplifier-chassis, .yogurt-btn, .zoom-knob, .foot, text, div, svg {
+       -webkit-user-select: none;
+       -moz-user-select: none;
+       -ms-user-select: none;
+       user-select: none;
+       outline: none !important;
+       -webkit-tap-highlight-color: transparent;
+   }
+
+
+   body {
+       margin: 0;
+       padding: 0;
+       width: 100%;
+       height: 100%;
+       overflow: hidden;
+       position: relative;
+       font-family: 'Helvetica Neue', Arial, sans-serif;
+       background-color: #f5f5f5;
+   }
+
+
+   /* アンプ筐体構造 (ドラッグ移動のため absolute 化) */
+   #amplifier-chassis {
+       position: absolute;
+       left: 50%;
+       top: 20px;
+       transform: translateX(-50%);
+       width: 400px;
+       height: 210px;
+       box-shadow: 0 8px 25px rgba(0,0,0,0.15);
+       cursor: move;
+   }
+
+
+   .main-panel {
+       position: absolute;
+       top: 0;
+       left: 0;
+       width: 400px;
+       height: 130px;
+       background: linear-gradient(to bottom, #f5f5f5 0%, #d8d8d8 70%, #bebebe 100%);
+       border-radius: 6px 6px 0 0;
+   }
+
+
+   .lower-ledge {
+       position: absolute;
+       top: 146px;
+       left: 0;
+       width: 400px;
+       height: 64px;
+       background: linear-gradient(to bottom, #bebebe 0%, #a6a6a6 100%);
+       border-bottom: 3px solid #1a1a1a;
+       border-radius: 0 0 6px 6px;
+   }
+
+
+   .yogurt-btn, .lcd-display, .custom-dropdown, .zoom-knob { cursor: pointer; }
+
+
+   /* 左側ロゴ・電源 */
+   .logo-container { position: absolute; top: 15px; left: 27.5px; width: 50px; height: 25px; pointer-events: none; }
+   .gemini-logo-svg { width: 100%; height: 100%; }
+   .power-btn { position: absolute; top: 55px; left: 43.5px; width: 18px; height: 18px; }
+   .power-led {
+       position: absolute; top: -10px; left: calc(50% - 2px); width: 4px; height: 4px;
+       background-color: #ff2a2a; border-radius: 50%;
+       box-shadow: 0 0 6px #ff2a2a, 0 0 2px #ffffff;
+       transition: background-color 0.15s, box-shadow 0.15s;
+   }
+
+
+   /* 右側 ZOOMノブセクション */
+   .zoom-label {
+       position: absolute; top: 27px; right: 26.5px; width: 52px;
+       text-align: center; font-size: 5px; letter-spacing: 0.8px;
+       color: #7a7a7a; font-weight: bold; pointer-events: none;
+   }
+
+
+   .zoom-knob-container {
+       position: absolute;
+       top: 36px;
+       right: 26.5px;
+       width: 52px;
+       height: 52px;
+       border-radius: 50%;
+       box-shadow: inset 0 5px 6px rgba(0,0,0,0.65), 0 1px 1px rgba(255,255,255,0.5);
+       background-color: #1a1a1a;
+       overflow: visible;
+   }
+
+
+   /* 本体表面の影を固定する最外殻レイヤー */
+   #zoom-knob-shaker {
+       width: 100%;
+       height: 100%;
+       position: relative;
+       transform: perspective(150px) rotateX(12deg);
+       transform-style: preserve-3d;
+       box-shadow: 0 4.5px 6px rgba(0,0,0,0.45);
+       border-radius: 50%;
+   }
+
+
+   /* 📳 ノブ表面（陰影①）の振動エンコーダ */
+   #knob-vibrator {
+       width: 100%;
+       height: 100%;
+       position: absolute;
+       top: 0; left: 0;
+   }
+
+
+   /* 💡【新・1.2秒周期ループアニメーション】
+      全体の周期1.2秒のうち、最初の0.2秒（16.67%まで）で1往復（3度 / -3度）し、残りの1秒（100%まで）は静止します */
+   @keyframes vibrate-cw {
+       0% { transform: rotate(0deg); }
+       8.33% { transform: rotate(3deg); }   /* 0.1秒時点で1分の半分（3度）へ */
+       16.67% { transform: rotate(0deg); }  /* 0.2秒時点で元の位置へ戻る */
+       100% { transform: rotate(0deg); }    /* そこから1秒間は完全に静止（リピート待ち） */
+   }
+   @keyframes vibrate-ccw {
+       0% { transform: rotate(0deg); }
+       8.33% { transform: rotate(-3deg); }  /* 0.1秒時点で59分の半分（-3度）へ */
+       16.67% { transform: rotate(0deg); }  /* 0.2秒時点で元の位置へ戻る */
+       100% { transform: rotate(0deg); }    /* そこから1秒間は完全に静止（リピート待ち） */
+   }
+
+
+   .vibrate-cw { animation: vibrate-cw 1.2s ease-in-out infinite; }
+   .vibrate-ccw { animation: vibrate-ccw 1.2s ease-in-out infinite; }
+
+
+   /* ノブ本体（影①） */
+   .zoom-knob {
+       position: absolute;
+       top: 0; left: 0; width: 100%; height: 100%;
+       border-radius: 50%;
+       background: conic-gradient(#888 0%, #f5f5f5 25%, #777 50%, #f5f5f5 75%, #888 100%);
+       box-shadow: inset 0 1px 1.5px rgba(255,255,255,0.7);
+   }
+
+
+   /* 📍「・（ポインター）」専用レイヤー（ブレには絶対追従しない独立構造） */
+   .knob-dot-pointer-layer {
+       position: absolute;
+       top: 0; left: 0; width: 100%; height: 100%;
+       pointer-events: none;
+       transform: rotate(0deg);
+   }
+   .zoom-dot {
+       position: absolute;
+       top: 6px;
+       left: 50%;
+       transform: translateX(-50%);
+       width: 4px;
+       height: 4px;
+       background-color: #222222;
+       border-radius: 50%;
+       box-shadow: inset 0 0.5px 1px rgba(255,255,255,0.6);
+   }
+
+
+   /* リピートボタン */
+   .repeat-btn { position: absolute; top: 98px; right: 43.5px; width: 18px; height: 18px; }
+   .led-bar {
+       position: absolute; top: 109px; left: 150px; width: 100px; height: 3px;
+       background: #121212; border-radius: 2px; 
+       box-shadow: 0 -0.5px 0px #ffffff, 0 1px 1px rgba(0,0,0,0.15);
+       transition: background 0.2s, box-shadow 0.2s;
+   }
+
+
+   /* 液晶ディスプレイ */
+   .lcd-display {
+       position: absolute; top: 32px; left: 105px; width: 190px; height: 64px;
+       background: #080808; border-radius: 4px; border: 1px solid #bcbcbc;
+       box-shadow: inset 0 0 12px rgba(0,0,0,0.95), 0 -1px 0px #ffffff, 0 2px 5px rgba(0,0,0,0.2);
+       display: flex; flex-direction: column; padding: 5px; box-sizing: border-box;
+       color: #ffffff; font-family: 'Courier New', Courier, monospace; position: relative;
+   }
+   .lcd-ready-screen {
+       position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #080808;
+       border-radius: 4px; display: flex; align-items: center; justify-content: center;
+       font-size: 20px; color: #ffffff; font-weight: bold; letter-spacing: 3px; z-index: 20;
+   }
+   .lcd-row1 { display: flex; justify-content: center; gap: 8px; height: 11px; margin-bottom: 4px; pointer-events: none; }
+   .lcd-badge { display: flex; align-items: center; border: 1px solid #222; border-radius: 1px; overflow: hidden; height: 100%; background: #000; }
+   #lcd-zoom-badge { pointer-events: auto !important; cursor: pointer; }
+   #lcd-zoom-badge:hover { background: #151515; border-color: #444; }
+   .badge-icon-box { background-color: #ffffff; display: flex; align-items: center; justify-content: center; width: 10px; height: 100%; }
+   .lcd-svg-s { width: 7px; height: 7px; fill: none; stroke: #000000; stroke-width: 2.5; }
+   .badge-text-box { font-size: 7.5px; font-weight: bold; padding: 0 3px; line-height: 9px; }
+   #lcd-repeat-badge, #lcd-speed-badge { display: none; }
+   .lcd-row2 { flex: 1; display: flex; justify-content: center; align-items: center; gap: 14px; pointer-events: none; }
+   .status-icon-container { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; transform: translateY(2px); }
+   .lcd-svg-m { width: 18px; height: 18px; fill: #ffffff; stroke: #ffffff; stroke-width: 1; stroke-linecap: round; stroke-linejoin: round; }
+   .track-info { font-size: 24px; font-weight: bold; letter-spacing: 0.5px; line-height: 1; transform: translateY(3px); }
+   #lcd-track-num { pointer-events: auto !important; cursor: pointer; padding: 0 2px; border-radius: 2px; }
+   #lcd-track-num:hover { background: #222; color: #00a2ff; }
+   .lcd-row3 { width: 100%; font-size: 8px; text-align: center; letter-spacing: 0.2px; border-top: 1px solid #111; padding-top: 2px; color: rgba(255,255,255,0.7); box-sizing: border-box; pointer-events: none; }
+
+
+   /* カスタム・プルダウンメニュー */
+   .custom-dropdown {
+       position: absolute; background: #111111; border: 1px solid #444444; border-radius: 4px;
+       box-shadow: 0 6px 15px rgba(0,0,0,0.6); z-index: 100; display: none; flex-direction: column;
+       padding: 2px 0; min-width: 65px; box-sizing: border-box;
+   }
+   .dropdown-item { padding: 6px 10px; color: #ffffff; font-size: 9px; font-family: 'Courier New', Courier, monospace; cursor: pointer; text-align: center; border-bottom: 1px solid #222; font-weight: bold; }
+   .dropdown-item:last-child { border-bottom: none; }
+   .dropdown-item:hover { background-color: #00a2ff; color: #000000; }
+
+
+   /* ボタン共通 */
+   .yogurt-btn {
+       border-radius: 50%;
+       background: radial-gradient(circle at 35% 35%, rgba(255,255,255,0.6) 0%, rgba(255,255,255,0.1) 45%, rgba(0,0,0,0.1) 80%, rgba(0,0,0,0.25) 100%), conic-gradient(#999, #e0e0e0, #999, #e0e0e0, #999);
+       border: 1px solid #b5b5b5;
+       box-shadow: 0 0 0 1.5px #111111, 0 3px 6px rgba(0,0,0,0.15), inset 0 1px 2px rgba(255,255,255,0.5);
+       display: flex; justify-content: center; align-items: center; box-sizing: border-box; transition: opacity 0.25s ease, transform 0.08s, box-shadow 0.08s;
+   }
+   .yogurt-btn:active { transform: scale(0.96); }
+   .btn-svg-icon { fill: none !important; stroke: #555555; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+   .glow-blue .btn-svg-icon { stroke: #1a55ff !important; filter: drop-shadow(0 0.5px 3.5px #0022cc); }
+   .led-blue { background: #003df2 !important; box-shadow: 0 0 9px #0022cc, 0 0 3px #1a55ff, 0 -0.5px 0px #ffffff; }
+   .glow-red .btn-svg-icon { stroke: #ff3b30 !important; filter: drop-shadow(0 0.5px 3.3px #ff2a2a); }
+   .led-red { background: #ff2a2a !important; box-shadow: 0 0 8px #ff2a2a, 0 0 3px #ffffff, 0 -0.5px 0px #ffffff; }
+
+
+   .bottom-buttons { width: 100%; height: 100%; display: flex; justify-content: center; align-items: center; gap: 14px; }
+   .ctrl-btn { width: 26px; height: 26px; }
+   .btn-svg-icon.s7 { width: 12px; height: 12px; }
+   .ctrl-btn.hidden-action { opacity: 0; pointer-events: none; transform: scale(0.8); }
+
+
+   /* 下段スロープ */
+   .slope-svg-layer { position: absolute; top: 130px; left: 0; z-index: 9; overflow: visible; pointer-events: none; }
+   .foot { position: absolute; bottom: -6px; width: 36px; height: 6px; background: linear-gradient(to right, #1a1a1a, #444, #1a1a1a); border-radius: 0 0 3px 3px; }
+   .foot.left { left: 45px; } .foot.right { right: 45px; }
+</style>
+</head>
+<body>
+
+
+<div id="amplifier-chassis">
+   <div class="main-panel">
+       <div class="logo-container">
+           <svg class="gemini-logo-svg" viewBox="0 0 50 25">
+               <defs>
+                   <linearGradient id="gemini-stripe-grad" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stop-color="#111" /><stop offset="100%" stop-color="#555" /></linearGradient>
+               </defs>
+               <g font-family="'Arial Black', Impact, sans-serif" font-size="7.5" font-weight="900" letter-spacing="1.2">
+                   <text x="25" y="16" text-anchor="middle" fill="none" stroke="url(#gemini-stripe-grad)" stroke-width="2.2" stroke-linejoin="round">GEMINI</text>
+                   <text x="25" y="16" text-anchor="middle" fill="none" stroke="#dcdcdc" stroke-width="1.4" stroke-linejoin="round">GEMINI</text>
+                   <text x="25" y="16" text-anchor="middle" fill="#00a2ff" stroke="none">GEMINI</text>
+               </g>
+           </svg>
+       </div>
+
+
+       <div class="power-btn yogurt-btn" id="power-button">
+           <div class="power-led" id="main-power-led"></div>
+           <svg class="btn-svg-icon" style="width:10px; height:10px;" viewBox="0 0 24 24"><path d="M16.56,5.44L15.11,6.89C16.84,7.94 18,9.83 18,12A6,6 0 0,1 12,18A6,6 0 0,1 6,12C6,9.83 7.16,7.94 8.88,6.88L7.44,5.44C5.18,7.16 3.67,9.91 3.67,13A8.33,8.33 0 0,0 12,21.33A8.33,8.33 0 0,0 20.33,13C20.33,9.91 18.82,7.16 16.56,5.44M11,3H13V13H11V3Z" fill="none"/></svg>
+       </div>
+
+
+       <div class="lcd-display">
+           <div id="lcd-ready-screen" class="lcd-ready-screen">READY</div>
+           <div class="lcd-row1">
+               <div class="lcd-badge" id="lcd-zoom-badge">
+                   <div class="badge-icon-box"><svg class="lcd-svg-s" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></div>
+                   <div class="badge-text-box" id="zoom-status-text">１００％</div>
+               </div>
+               <div class="lcd-badge" id="lcd-repeat-badge">
+                   <div class="badge-icon-box"><svg class="lcd-svg-s" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v1a4 4 0 0 1-4 4H3"/></svg></div>
+                   <div class="badge-text-box" id="lcd-repeat-text">ALL</div>
+               </div>
+               <div class="lcd-badge" id="lcd-speed-badge">
+                   <div class="badge-icon-box"><svg class="lcd-svg-s" viewBox="0 0 24 24"><polyline points="17 11 12 6 7 11"/><polyline points="17 18 12 13 7 18"/></svg></div>
+                   <div class="badge-text-box">×2</div>
+               </div>
+           </div>
+           <div class="lcd-row2">
+               <div class="status-icon-container" id="lcd-status-icon"></div>
+               <div class="track-info" id="lcd-track-text"><span id="lcd-track-num">01</span><span> / 03</span></div>
+           </div>
+           <div class="lcd-row3" id="lcd-date">DATE: ----/--/-- --:--:--</div>
+       </div>
+
+
+       <div class="led-bar" id="center-led-bar"></div>
+
+
+       <div class="zoom-label">ZOOM</div>
+       <div class="zoom-knob-container">
+           <div id="zoom-knob-shaker">
+               <div id="knob-vibrator">
+                   <div class="zoom-knob" id="zoom-knob"></div>
+               </div>
+               <div class="knob-dot-pointer-layer" id="knob-pointer">
+                   <div class="zoom-dot"></div>
+               </div>
+           </div>
+       </div>
+       <div class="repeat-btn yogurt-btn" id="repeat-button"><svg class="btn-svg-icon" style="width:10px; height:10px;" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4M3 11v-1a4 4 0 0 1 4-4h14M7 22l-4-4 4-4M21 13v1a4 4 0 0 1-4 4H3"/></svg></div>
+   </div>
+
+
+   <svg class="slope-svg-layer" width="400" height="16">
+       <path d="M 0 0 L 400 0 L 400 16 L 0 16 Z" fill="#ffffff" />
+       <line x1="0" y1="0" x2="400" y2="0" stroke="#dcdcdc" stroke-width="1.5" />
+       <line x1="0" y1="15.5" x2="400" y2="15.5" stroke="#b5b5b5" stroke-width="1" />
+   </svg>
+
+
+   <div class="lower-ledge">
+       <div class="bottom-buttons">
+           <div class="ctrl-btn yogurt-btn" id="btn-prev"><svg class="btn-svg-icon s7" viewBox="0 0 24 24"><line x1="5" y1="5" x2="5" y2="19"/><polygon points="19,5 9,12 19,19"/></svg></div>
+           <div class="ctrl-btn yogurt-btn" id="btn-rew"><svg class="btn-svg-icon s7" viewBox="0 0 24 24"><polygon points="11,5 2,12 11,19"/><polygon points="21,5 12,12 21,19"/></svg></div>
+           <div class="ctrl-btn yogurt-btn" id="btn-rev"><svg class="btn-svg-icon s7" viewBox="0 0 24 24"><polygon points="19,5 5,12 19,19"/></svg></div>
+           <div class="ctrl-btn yogurt-btn" id="btn-stop"><svg class="btn-svg-icon s7" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14"/></svg></div>
+           <div class="ctrl-btn yogurt-btn" id="btn-play"><svg class="btn-svg-icon s7" viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20"/></svg></div>
+           <div class="ctrl-btn yogurt-btn" id="btn-ff"><svg class="btn-svg-icon s7" viewBox="0 0 24 24"><polygon points="3,5 12,12 3,19"/><polygon points="12,5 21,12 12,19"/></svg></div>
+           <div class="ctrl-btn yogurt-btn" id="btn-next"><svg class="btn-svg-icon s7" viewBox="0 0 24 24"><polygon points="5,5 15,12 5,19"/><line x1="19" y1="5" x2="19" y2="19"/></svg></div>
+       </div>
+   </div>
+   <div class="foot left"></div><div class="foot right"></div>
+</div>
+
+
+<div id="zoom-dropdown" class="custom-dropdown">
+   <div class="dropdown-item" data-zoom="100">１０％</div>
+   <div class="dropdown-item" data-zoom="75">７５％</div>
+   <div class="dropdown-item" data-zoom="50">５０％</div>
+   <div class="dropdown-item" data-zoom="25">２５％</div>
+</div>
+<div id="track-dropdown" class="custom-dropdown">
+   <div class="dropdown-item" data-track="1">01</div>
+   <div class="dropdown-item" data-track="2">02</div>
+   <div class="dropdown-item" data-track="3">03</div>
+</div>
+
+
+<script>
+   const powerLed = document.getElementById('main-power-led');
+   const readyScreen = document.getElementById('lcd-ready-screen');
+   const chassis = document.getElementById('amplifier-chassis');
+
+
+   // アンプ全体のドラッグ移動ロジック
+   let isDraggingChassis = false;
+   let chassisStartX, chassisStartY, chassisLeft, chassisTop;
+
+
+   window.addEventListener('DOMContentLoaded', () => {
+       powerLed.style.backgroundColor = '#ff2a2a';
+       powerLed.style.boxShadow = '0 0 6px #ff2a2a, 0 0 2px #ffffff';
+       readyScreen.style.display = 'flex';
+       setTimeout(() => {
+           powerLed.style.backgroundColor = '#00ff33';
+           powerLed.style.boxShadow = '0 0 6px #00ff33, 0 0 2px #ffffff';
+           readyScreen.style.display = 'none';
+       }, 1000);
+
+
+       const rect = chassis.getBoundingClientRect();
+       chassis.style.transform = 'none';
+       chassis.style.margin = '0';
+       chassis.style.left = rect.left + 'px';
+       chassis.style.top = rect.top + 'px';
+   });
+
+
+   chassis.addEventListener('mousedown', (e) => {
+       if (e.target.closest('.yogurt-btn') || e.target.closest('.zoom-knob-container') || e.target.closest('.lcd-display') || e.target.closest('.custom-dropdown')) {
+           return;
+       }
+       isDraggingChassis = true;
+       chassisStartX = e.clientX;
+       chassisStartY = e.clientY;
+       chassisLeft = parseFloat(chassis.style.left) || 0;
+       chassisTop = parseFloat(chassis.style.top) || 0;
+       e.preventDefault();
+   });
+
+
+   function closeSystem() {
+       powerLed.style.backgroundColor = '#ff2a2a';
+       powerLed.style.boxShadow = '0 0 6px #ff2a2a, 0 0 2px #ffffff';
+       readyScreen.style.display = 'flex';
+       readyScreen.innerText = 'READY';
+       setTimeout(() => {
+           if (typeof google !== 'undefined' && google.script && google.script.host) {
+               google.script.host.close();
+           } else { alert("システム終了 (シミュレーション)"); }
+       }, 500);
+   }
+   document.getElementById('power-button').addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); closeSystem(); });
+
+
+   // オーディオロジック
+   let currentState = 'STOPPED'; let lastDirection = 'BLUE'; let currentTrack = 1; let repeatMode = 0; let stopClickCount = 0; let skipIntervalId = null; let stopTimeoutId = null; let shouldShowStopIcon = false;
+   const centerLed = document.getElementById('center-led-bar'); const lcdStatus = document.getElementById('lcd-status-icon'); const lcdTrackNum = document.getElementById('lcd-track-num'); const lcdRepeatBadge = document.getElementById('lcd-repeat-badge'); const lcdRepeatText = document.getElementById('lcd-repeat-text'); const lcdSpeedBadge = document.getElementById('lcd-speed-badge');
+   const btnPlay = document.getElementById('btn-play'); const btnFf = document.getElementById('btn-ff'); const btnRev = document.getElementById('btn-rev'); const btnRew = document.getElementById('btn-rew'); const btnStop = document.getElementById('btn-stop'); const btnRepeat = document.getElementById('repeat-button'); const btnPrev = document.getElementById('btn-prev'); const btnNext = document.getElementById('btn-next');
+   const svgPlay = '<svg class="lcd-svg-m" viewBox="0 0 24 24"><polygon points="6,4 20,12 6,20" /></svg>'; const svgFf = '<svg class="lcd-svg-m" viewBox="0 0 24 24"><polygon points="3,5 12,12 3,19" /><polygon points="12,5 21,12 12,19" /></svg>'; const svgRev = '<svg class="lcd-svg-m" viewBox="0 0 24 24"><polygon points="19,5 5,12 19,19" /></svg>'; const svgRew = '<svg class="lcd-svg-m" viewBox="0 0 24 24"><polygon points="11,5 2,12 11,19" /><polygon points="21,5 12,12 21,19" /></svg>'; const svgStop = '<svg class="lcd-svg-m" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" /></svg>';
+
+
+   function updateSystemUI() {
+       [btnPlay, btnFf, btnRev, btnRew, btnStop, btnPrev, btnNext].forEach(b => b.classList.remove('glow-blue', 'glow-red')); centerLed.classList.remove('led-blue', 'led-red'); lcdSpeedBadge.style.display = 'none';
+       if (currentState === 'STOPPED') { btnPrev.classList.remove('hidden-action'); btnNext.classList.remove('hidden-action'); } else { btnPrev.classList.add('hidden-action'); btnNext.classList.add('hidden-action'); stopClickCount = 0; }
+       switch (currentState) {
+           case 'PLAY': lastDirection = 'BLUE'; btnPlay.classList.add('glow-blue'); centerLed.classList.add('led-blue'); lcdStatus.innerHTML = svgPlay; break;
+           case 'FF': lastDirection = 'BLUE'; btnFf.classList.add('glow-blue'); centerLed.classList.add('led-blue'); lcdStatus.innerHTML = svgFf; lcdSpeedBadge.style.display = 'flex'; break;
+           case 'REV': lastDirection = 'RED'; btnRev.classList.add('glow-red'); centerLed.classList.add('led-red'); lcdStatus.innerHTML = svgRev; break;
+           case 'REW': lastDirection = 'RED'; btnRew.classList.add('glow-red'); centerLed.classList.add('led-red'); lcdStatus.innerHTML = svgRew; lcdSpeedBadge.style.display = 'flex'; break;
+           case 'STOPPED':
+               if (shouldShowStopIcon && !stopTimeoutId) {
+                   lcdStatus.innerHTML = svgStop;
+                   stopTimeoutId = setTimeout(() => { if (currentState === 'STOPPED') lcdStatus.innerHTML = ''; stopTimeoutId = null; }, 350);
+                   shouldShowStopIcon = false;
+               }
+               btnStop.classList.add(lastDirection === 'BLUE' ? 'glow-blue' : 'glow-red'); break;
+       }
+       btnRepeat.classList.remove('glow-blue', 'glow-red'); if (repeatMode !== 0) btnRepeat.classList.add(lastDirection === 'BLUE' ? 'glow-blue' : 'glow-red');
+   }
+
+
+   btnPlay.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); currentState = 'PLAY'; updateSystemUI(); }); btnFf.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); currentState = 'FF'; updateSystemUI(); }); btnRev.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); currentState = 'REV'; updateSystemUI(); }); btnRew.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); currentState = 'REW'; updateSystemUI(); });
+   btnStop.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); if (currentState !== 'STOPPED') { currentState = 'STOPPED'; stopClickCount = 1; shouldShowStopIcon = true; } else { stopClickCount++; if (stopClickCount >= 2) { currentTrack = 1; lcdTrackNum.innerText = '01'; } } updateSystemUI(); });
+   btnRepeat.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); repeatMode = (repeatMode + 1) % 3; if (repeatMode === 1) { lcdRepeatBadge.style.display = 'flex'; lcdRepeatText.innerText = 'ALL'; } else if (repeatMode === 2) { lcdRepeatBadge.style.display = 'flex'; lcdRepeatText.innerText = '１'; } else { lcdRepeatBadge.style.display = 'none'; } updateSystemUI(); });
+   function handleSkip(dir) { if (currentState !== 'STOPPED') return; if (dir === 'NEXT') { btnNext.classList.add('glow-blue'); currentTrack = currentTrack < 3 ? currentTrack + 1 : 1; } else { btnPrev.classList.add('glow-red'); currentTrack = currentTrack > 1 ? currentTrack - 1 : 3; } lcdTrackNum.innerText = String(currentTrack).padStart(2, '0'); }
+   const endSkip = () => { clearInterval(skipIntervalId); btnNext.classList.remove('glow-blue'); btnPrev.classList.remove('glow-red'); };
+   btnNext.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); handleSkip('NEXT'); skipIntervalId = setInterval(() => handleSkip('NEXT'), 250); }); btnNext.addEventListener('mouseup', endSkip); btnNext.addEventListener('mouseleave', endSkip); btnPrev.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); handleSkip('PREV'); skipIntervalId = setInterval(() => handleSkip('PREV'), 250); }); btnPrev.addEventListener('mouseup', endSkip); btnPrev.addEventListener('mouseleave', endSkip);
+
+
+   // =========================================
+   // 🎛️ ZOOMノブ・アドバンスド制御
+   // =========================================
+   const zoomKnob = document.getElementById('zoom-knob');
+   const knobPointer = document.getElementById('knob-pointer');
+   const knobVibrator = document.getElementById('knob-vibrator');
+   const zoomStatus = document.getElementById('zoom-status-text');
+   const zoomDropdown = document.getElementById('zoom-dropdown');
+   const trackDropdown = document.getElementById('track-dropdown');
+   const zoomBadge = document.getElementById('lcd-zoom-badge');
+  
+   let currentAngle = 0;
+   let isDraggingKnob = false;
+   let knobCenterX = 0;
+   let knobCenterY = 0;
+   let startAngleOffset = 0;
+   let wheelTimeout = null;
+
+
+   function updateKnobVisual() {
+       // 「・」ポインターの純粋な角度移動（ブレには絶対追従しない）
+       knobPointer.style.transform = `rotate(${currentAngle}deg)`;
+      
+       let norm = (currentAngle % 360 + 360) % 360;
+       let zoom = Math.floor((norm / 360) * 100);
+       if (zoom === 0) zoom = 100;
+       zoomStatus.innerText = String(zoom).replace(/[0-9]/g, s => String.fromCharCode(s.charCodeAt(0) + 0xFEE0)) + "％";
+   }
+
+
+   // 📳 ループ振動を開始するトリガーロジック
+   function startVibration(direction) {
+       if (knobVibrator.classList.contains(`vibrate-${direction}`)) return;
+       knobVibrator.classList.remove('vibrate-cw', 'vibrate-ccw');
+       knobVibrator.classList.add(`vibrate-${direction}`);
+   }
+
+
+   // 📳 振動を停止するロジック
+   function stopVibration() {
+       knobVibrator.classList.remove('vibrate-cw', 'vibrate-ccw');
+   }
+
+
+   // ノブをクリックした瞬間 (マウスドラッグ開始)
+   zoomKnob.addEventListener('mousedown', function(e) {
+       e.preventDefault();
+       e.stopPropagation();
+       hideAllDropdowns();
+
+
+       currentAngle = 0;
+       updateKnobVisual();
+
+
+       isDraggingKnob = true;
+
+
+       const rect = zoomKnob.getBoundingClientRect();
+       knobCenterX = rect.left + rect.width / 2;
+       knobCenterY = rect.top + rect.height / 2;
+
+
+       const clickAngle = Math.atan2(e.clientY - knobCenterY, e.clientX - knobCenterX) * (180 / Math.PI);
+       startAngleOffset = clickAngle - currentAngle;
+   });
+
+
+   // マウス移動およびアンプ自体の移動処理
+   document.addEventListener('mousemove', function(e) {
+       if (isDraggingChassis) {
+           const dx = e.clientX - chassisStartX;
+           const dy = e.clientY - chassisStartY;
+           chassis.style.left = (chassisLeft + dx) + 'px';
+           chassis.style.top = (chassisTop + dy) + 'px';
+       }
+       if (isDraggingKnob) {
+           e.preventDefault();
+           e.stopPropagation();
+          
+           const moveAngle = Math.atan2(e.clientY - knobCenterY, e.clientX - knobCenterX) * (180 / Math.PI);
+           let newAngle = moveAngle - startAngleOffset;
+          
+           // 変化のあった瞬間にループ振動を呼び出す
+           if (newAngle !== currentAngle) {
+               if (newAngle > currentAngle) {
+                   startVibration('cw');
+               } else if (newAngle < currentAngle) {
+                   startVibration('ccw');
+               }
+           }
+          
+           currentAngle = newAngle;
+           updateKnobVisual();
+       }
+   }, { passive: false });
+
+
+   document.addEventListener('mouseup', function() {
+       isDraggingChassis = false;
+       if (isDraggingKnob) {
+           isDraggingKnob = false;
+           stopVibration(); // マウスを離したら即座にループ振動を停止
+       }
+   });
+
+
+   // 🛞 【劇的改善】トラックパッド（ホイール）操作の全体化
+   // ターゲットをアンプ筐体全体 (chassis) に広げたため、カーソルをノブに合わせる必要がありません
+   chassis.addEventListener('wheel', function(e) {
+       e.preventDefault();
+       e.stopPropagation();
+      
+       // 操作方向の反転
+       const angleDiff = e.deltaY > 0 ? 3.6 : -3.6;
+       currentAngle += angleDiff;
+       updateKnobVisual();
+      
+       // 回転方向に応じて1.2秒周期のループ振動を発動
+       if (angleDiff > 0) {
+           startVibration('cw');
+       } else {
+           startVibration('ccw');
+       }
+      
+       // 操作を完全にやめてから300ms後に綺麗に振動ループを停止
+       clearTimeout(wheelTimeout);
+       wheelTimeout = setTimeout(() => {
+           stopVibration();
+       }, 300);
+   }, { passive: false });
+
+
+   // プルダウン制御
+   function showDropdown(menu, trigger) { hideAllDropdowns(); menu.style.display = 'flex'; const tRect = trigger.getBoundingClientRect(); menu.style.left = tRect.left + 'px'; menu.style.top = (tRect.bottom + 3) + 'px'; }
+   function hideAllDropdowns() { zoomDropdown.style.display = 'none'; trackDropdown.style.display = 'none'; }
+   zoomBadge.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); if(zoomDropdown.style.display==='flex') hideAllDropdowns(); else showDropdown(zoomDropdown, zoomBadge); });
+   lcdTrackNum.addEventListener('mousedown', (e) => { e.preventDefault(); e.stopPropagation(); if(trackDropdown.style.display==='flex') hideAllDropdowns(); else showDropdown(trackDropdown, lcdTrackNum); });
+  
+   document.querySelectorAll('#zoom-dropdown .dropdown-item').forEach(item => { item.addEventListener('mousedown', function(e) { const z = parseInt(this.getAttribute('data-zoom')); currentAngle = (z === 100) ? 0 : (z / 100) * 360; updateKnobVisual(); hideAllDropdowns(); }); });
+   document.querySelectorAll('#track-dropdown .dropdown-item').forEach(item => { item.addEventListener('mousedown', function(e) { currentTrack = parseInt(this.getAttribute('data-track')); lcdTrackNum.innerText = String(currentTrack).padStart(2, '0'); hideAllDropdowns(); }); });
+   document.addEventListener('mousedown', (e) => { if (!e.target.closest('.custom-dropdown') && !e.target.closest('#lcd-zoom-badge') && !e.target.closest('#lcd-track-num')) hideAllDropdowns(); });
+
+
+   // 時計
+   setInterval(() => { const n = new Date(); document.getElementById('lcd-date').innerText = `DATE: ${n.getFullYear()}/${String(n.getMonth()+1).padStart(2,'0')}/${String(n.getDate()).padStart(2,'0')} ${String(n.getHours()).padStart(2,'0')}:${String(n.getMinutes()).padStart(2,'0')}:${String(n.getSeconds()).padStart(2,'0')}`; }, 1000);
+
+
+   // 初期化
+   updateKnobVisual(); updateSystemUI();
+</script>
+</body>
+</html>

@@ -1,0 +1,1217 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>スプレッドシート履歴アニメーションエンジン</title>
+<style>
+  /* ―― グローバル変数 ―― */
+  :root {
+    --col-inner-width: 95px;
+    --col-gap: 4px;
+    --beat-time: 500ms;
+    --zoom-factor: 1.0;
+  }
+
+  body {
+    margin: 0; padding: 0;
+    width: 100vw; height: 100vh;
+    background-color: #1a1a1a;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    user-select: none;
+  }
+
+  /* コントロールバー */
+  .control-bar {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background: linear-gradient(to bottom, #3a3c3f, #222426);
+    padding: 12px 20px;
+    border-bottom: 2px solid #111;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.5);
+    z-index: 1000;
+  }
+
+  /* シミュレーション・バー */
+  .simulation-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #111;
+    padding: 8px 20px;
+    border-bottom: 1px solid #222;
+    overflow-x: auto;
+  }
+  .sim-title {
+    color: #a3e635;
+    font-size: 11px;
+    font-weight: bold;
+    letter-spacing: 1px;
+    margin-right: 10px;
+    white-space: nowrap;
+    text-shadow: 0 0 4px rgba(163, 230, 53, 0.4);
+  }
+  .sim-btn {
+    background: linear-gradient(to bottom, #333, #111);
+    border: 1px solid #444;
+    color: #d9f99d;
+    padding: 5px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    font-weight: bold;
+    white-space: nowrap;
+    transition: all 0.1s;
+  }
+  .sim-btn:hover { background: linear-gradient(to bottom, #4d7c0f, #166534); color: #fff; }
+  .sim-btn:active { transform: translateY(1px); }
+
+  /* つまみ＆ディスプレイ共通の整列コンテナ */
+  .control-group-aligned { display: flex; align-items: center; gap: 10px; }
+
+  /* センターコンソール */
+  .center-console {
+    display: flex; align-items: center; gap: 20px;
+    background: #111; padding: 8px 24px; border-radius: 12px;
+    border: 1px solid #333; box-shadow: inset 0 2px 10px rgba(0,0,0,0.8), 0 2px 5px rgba(0,0,0,0.5);
+    margin-left: auto; margin-right: auto;
+  }
+
+  .knob-container { display: flex; align-items: center; gap: 8px; }
+  .knob-wrapper { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .knob-label { color: #aaa; font-size: 10px; font-weight: bold; letter-spacing: 1px; }
+  
+  .knob-outer {
+    width: 46px; height: 46px; border-radius: 50%;
+    background: linear-gradient(135deg, #555, #111);
+    box-shadow: 0 4px 6px rgba(0,0,0,0.8), inset 0 2px 4px rgba(255,255,255,0.2);
+    display: flex; justify-content: center; align-items: center; cursor: grab; position: relative;
+  }
+  .knob-outer:active { cursor: grabbing; }
+  .knob-inner {
+    width: 36px; height: 36px; border-radius: 50%;
+    background: radial-gradient(circle at 30% 30%, #666, #1d1e20);
+    box-shadow: inset 0 -2px 5px rgba(0,0,0,0.6), 0 2px 4px rgba(255,255,255,0.1);
+    position: relative; transform: rotate(0deg);
+  }
+  .knob-indicator {
+    position: absolute; top: 3px; left: 17px; width: 3px; height: 8px; border-radius: 1px;
+  }
+  .bpm-indicator { background-color: #3b82f6; box-shadow: 0 0 6px #2563eb; }
+  .zoom-indicator { background-color: #10b981; box-shadow: 0 0 6px #059669; }
+  .date-indicator { background-color: #f59e0b; box-shadow: 0 0 6px #d97706; }
+
+  /* ディスプレイ表示パネル */
+  .display-panel {
+    background: #050505; border: 1px solid #222; border-radius: 4px;
+    padding: 3px 6px; text-align: center;
+    box-shadow: inset 0 2px 5px rgba(0,0,0,0.9);
+    display: flex; justify-content: center; align-items: center;
+  }
+  .val-short { min-width: 30px; height: 20px; }
+  .val-long { min-width: 140px; height: 20px; }
+  .display-value { font-family: 'Courier New', Courier, monospace; font-size: 13px; font-weight: bold; }
+  
+  .val-blue { color: #60a5fa; text-shadow: 0 0 4px rgba(96, 165, 250, 0.7); }
+  .val-green { color: #34d399; text-shadow: 0 0 4px rgba(52, 211, 153, 0.7); }
+  .val-orange { color: #fcd34d; text-shadow: 0 0 4px rgba(252, 211, 77, 0.7); }
+  .val-red { color: #f87171; text-shadow: 0 0 5px rgba(248, 113, 113, 0.8); }
+
+  /* PLAYボタンノブ風 */
+  .play-btn-outer { cursor: pointer; background: linear-gradient(135deg, #444, #111); }
+  .play-btn-inner {
+    display: flex; justify-content: center; align-items: center;
+    transition: all 0.1s; width: 36px; height: 36px; border-radius: 50%;
+  }
+  .play-btn-outer:active .play-btn-inner { box-shadow: inset 0 2px 8px rgba(0,0,0,0.8); transform: scale(0.95); }
+  .loop-active {
+    box-shadow: 0 0 10px #10b981, inset 0 0 5px #10b981 !important;
+    background: radial-gradient(circle at 30% 30%, #1d1e20, #064e3b) !important;
+  }
+
+  .css-icon { width: 14px; height: 14px; fill: currentColor; stroke: currentColor; stroke-width: 0; color: #ffaa00; filter: drop-shadow(0 1px 1px rgba(0,0,0,0.5)); }
+  .loop-active .css-icon { color: #10b981; }
+
+  /* ナビゲーションとプリセット */
+  .preset-buttons { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+  .btn {
+    background: linear-gradient(to bottom, #444, #222); border: 1px solid #111;
+    color: #ffaa00; padding: 8px 16px; border-radius: 6px; cursor: pointer;
+    font-weight: bold; font-size: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.4);
+    display: flex; align-items: center; gap: 6px; transition: all 0.1s;
+  }
+  .btn:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-lock { background: linear-gradient(to bottom, #222, #111); color: #888; border-color: #333; }
+  .btn-edit { background: linear-gradient(to bottom, #f97316, #ea580c); color: #000; border-color: #c2410c; text-shadow: none; box-shadow: 0 0 10px rgba(249,115,22,0.5); }
+  .btn-saving { background: linear-gradient(to bottom, #eab308, #ca8a04); color: #000; border-color: #a16207; cursor: wait; }
+  .btn-reset { background: linear-gradient(to bottom, #7f1d1d, #450a0a); color: #fca5a5; border-color: #450a0a; }
+
+  .padlock-svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2; transition: transform 0.2s; }
+
+  /* シート表示エリア */
+  #sheet-window { flex: 1; overflow: auto; padding: 20px; background-color: #e5e7eb; }
+  
+  #sheet-container {
+    display: inline-flex; gap: var(--col-gap); min-width: max-content;
+    padding-bottom: 50px; padding-right: 50px;
+    transform: scale(var(--zoom-factor)); transform-origin: top left; transition: transform 0.2s ease-out;
+  }
+
+  .sheet-column {
+    display: flex; flex-direction: column; width: var(--col-inner-width); flex-shrink: 0;
+    background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1); position: relative; transform-origin: center center;
+    transition: transform var(--beat-time) ease-in-out, box-shadow var(--beat-time) ease-in-out, border-color var(--beat-time) ease-in-out, opacity var(--beat-time) ease-in-out;
+  }
+  
+  .col-letter {
+    background: #e2e8f0; text-align: center; font-size: 11px; font-weight: bold; color: #64748b;
+    padding: 3px 0; border-bottom: 1px solid #cbd5e1; box-sizing: border-box; height: 20px;
+  }
+
+  .cell-header {
+    background: #f1f5f9; padding: 10px 4px; text-align: center; font-weight: bold; font-size: 12px;
+    border-bottom: 2px solid #cbd5e1; color: #1e293b; position: sticky; top: 0; z-index: 10;
+    flex-shrink: 0; height: 38px; box-sizing: border-box;
+    transition: background-color var(--beat-time) ease-in-out, color var(--beat-time) ease-in-out;
+  }
+  
+  .cell-cb {
+    padding: 6px; text-align: center; border-bottom: 1px solid #f1f5f9; display: flex;
+    justify-content: center; align-items: center; flex-shrink: 0; height: 26px; box-sizing: border-box;
+    transition: box-shadow var(--beat-time) ease-in-out, background-color var(--beat-time) ease-in-out;
+  }
+  .cell-cb.checked { background-color: #dcfce3; }
+
+  .glow-blue { border-color: #3b82f6 !important; box-shadow: 0 0 15px 4px rgba(59, 130, 246, 0.6), inset 0 0 5px rgba(59, 130, 246, 0.3) !important; z-index: 5; }
+  .glow-red { border-color: #ef4444 !important; box-shadow: 0 0 15px 4px rgba(239, 68, 68, 0.6), inset 0 0 5px rgba(239, 68, 68, 0.3) !important; z-index: 5; }
+  .glow-green { border-color: #10b981 !important; box-shadow: 0 0 15px 4px rgba(16, 185, 129, 0.6), inset 0 0 5px rgba(16, 185, 129, 0.3) !important; z-index: 5; }
+  .glow-orange { border-color: #f97316 !important; box-shadow: 0 0 15px 4px rgba(249, 115, 22, 0.6), inset 0 0 5px rgba(249, 115, 22, 0.3) !important; z-index: 5; }
+  .glow-yellow { border-color: #eab308 !important; box-shadow: 0 0 15px 4px rgba(234, 179, 8, 0.6), inset 0 0 5px rgba(234, 179, 8, 0.3) !important; z-index: 5; }
+  .glow-cell-blue { box-shadow: 0 0 12px 3px rgba(59, 130, 246, 0.6), inset 0 0 0 2px #3b82f6 !important; z-index: 15; border-radius: 4px; }
+  .glow-cell-red { box-shadow: 0 0 12px 3px rgba(239, 68, 68, 0.6), inset 0 0 0 2px #ef4444 !important; z-index: 15; border-radius: 4px; }
+
+  /* トーストUI */
+  #toast-container {
+    position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 2000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;
+  }
+  .toast {
+    background: rgba(17, 24, 39, 0.95); color: #fff; padding: 12px 24px;
+    border-radius: 6px; border: 1px solid #374151; font-size: 13px; font-weight: bold;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.5);
+    animation: fadeInOut 3s forwards;
+  }
+  @keyframes fadeInOut {
+    0% { opacity: 0; transform: translateY(10px); }
+    10% { opacity: 1; transform: translateY(0); }
+    90% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-10px); }
+  }
+</style>
+</head>
+<body>
+
+<div class="control-bar">
+  <!-- 左モジュール: BPM / ZOOM -->
+  <div style="display: flex; gap: 20px;">
+    <div class="control-group-aligned">
+      <div class="knob-container">
+        <div class="knob-wrapper">
+          <div class="knob-label">BPM</div>
+          <div class="knob-outer" id="bpm-knob">
+            <div class="knob-inner"><div class="knob-indicator bpm-indicator"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="display-panel val-short"><div class="display-value val-blue" id="bpm-val">120</div></div>
+    </div>
+
+    <div class="control-group-aligned">
+      <div class="knob-container">
+        <div class="knob-wrapper">
+          <div class="knob-label">ZOOM</div>
+          <div class="knob-outer" id="zoom-knob">
+            <div class="knob-inner"><div class="knob-indicator zoom-indicator"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="display-panel val-short"><div class="display-value val-green" id="zoom-val">100%</div></div>
+    </div>
+  </div>
+
+  <!-- センターコンソール -->
+  <div class="center-console">
+    <!-- DATE グループ (左側) -->
+    <div class="control-group-aligned">
+      <div class="knob-container">
+        <div class="knob-wrapper">
+          <div class="knob-label" style="color:#f59e0b;">DATE</div>
+          <div class="knob-outer" id="date-knob">
+            <div class="knob-inner"><div class="knob-indicator date-indicator"></div></div>
+          </div>
+        </div>
+      </div>
+      <div class="display-panel val-short"><div class="display-value val-orange" id="date-val">1</div></div>
+      <div class="display-panel val-long"><div class="display-value val-orange" id="date-timestamp-val">--/--/-- --:--:--</div></div>
+    </div>
+
+    <!-- 空間セパレータ -->
+    <div style="width: 20px;"></div>
+
+    <!-- PLAY グループ (右側) -->
+    <div class="control-group-aligned">
+      <div class="display-panel val-long"><div class="display-value val-red" id="play-timestamp-val">--/--/-- --:--:--</div></div>
+      <div class="display-panel val-short"><div class="display-value val-red" id="play-val">1</div></div>
+      
+      <div class="knob-container">
+        <div class="knob-wrapper">
+          <div class="knob-label" style="color:#f87171;">PLAY/LOOP</div>
+          <div class="knob-outer play-btn-outer" id="play-knob" title="クリック: 再生/停止  ダブルクリック: ループ切替">
+            <div class="knob-inner play-btn-inner" id="play-btn-design">
+              <svg class="css-icon" id="play-svg" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 右モジュール: プリセットボタン -->
+  <div class="preset-buttons">
+    <button class="btn btn-reset" id="btn-reset-edit" onclick="resetEditMode()" style="display: none;">リセット</button>
+    <button class="btn btn-lock" id="btn-edit-mode" onclick="toggleEditMode()">
+      <svg class="padlock-svg" id="lock-icon" viewBox="0 0 24 24">
+        <path id="lock-shackle" d="M7 11V7a5 5 0 0 1 10 0v4" />
+        <rect x="5" y="11" width="14" height="10" rx="2" />
+      </svg>
+      <span id="btn-lock-text">LOCK</span>
+    </button>
+  </div>
+</div>
+
+<!-- 🔴 新設: アクション・シミュレーター バー 🔴 -->
+<div class="simulation-bar">
+  <div class="sim-title">ACTION SIMULATOR</div>
+  <button class="sim-btn" onclick="runSimulation(1)">① 目的地一覧1</button>
+  <button class="sim-btn" onclick="runSimulation(2)">② 目的地検索</button>
+  <button class="sim-btn" onclick="runSimulation(3)">③ マスタ</button>
+  <button class="sim-btn" onclick="runSimulation(4)">④ 選択</button>
+  <button class="sim-btn" onclick="runSimulation(5)">⑤ 出発年月日</button>
+  <button class="sim-btn" onclick="runSimulation(6)">⑥ 宮戸橋時刻表</button>
+  <button class="sim-btn" onclick="runSimulation(7)">⑦ カレンダー</button>
+  <button class="sim-btn" onclick="runSimulation(8)">⑧ リカバリー</button>
+</div>
+
+<div id="sheet-window">
+  <div id="sheet-container"></div>
+</div>
+
+<div id="toast-container"></div>
+
+<script>
+  /* ―― 🌟 列名（ヘッダーベース）によるアクション定義 🌟 ―― */
+  const ACTION_CONFIG = {
+    1: {
+      name: "目的地一覧1",
+      clear: ["候補", "選択", "建物", "電話", "WEB", "祝日", "季節の行事", "アイコン", "未完警報"],
+      fill: ["目的地一覧1"]
+    },
+    2: {
+      name: "目的地検索",
+      clear: ["候補", "選択", "建物", "電話", "WEB", "祝日", "季節の行事", "アイコン", "未完警報"],
+      fill: ["目的地検索"]
+    },
+    3: {
+      name: "マスタ",
+      clear: ["目的地一覧1", "目的地一覧2", "目的地検索", "候補", "選択", "PlaceID", "原型", "名前", "郵便", "住所", "建物", "電話", "WEB", "営業時間", "アイコン", "出発時間", "バス停時間", "目的地到着時間", "滞在時間", "天気1", "天気2", "天気3", "イベントID"],
+      fill: ["候補"]
+    },
+    4: {
+      name: "選択",
+      clear: ["営業時間", "アイコン", "出発時間", "バス停時間", "目的地到着時間", "滞在時間", "天気1", "天気2", "天気3", "イベントID"],
+      fill: ["PlaceID", "原型", "名前", "郵便", "住所", "建物", "電話", "WEB"]
+    },
+    5: {
+      name: "出発年月日",
+      clear: ["出発年月日", "祝日", "季節の行事", "アイコン", "出発時間", "バス停時間", "目的地到着時間", "滞在時間", "天気1", "天気2", "天気3", "イベントID"],
+      fill: ["出発日", "祝日", "季節の行事", "アイコン"],
+      if_clear: ["出発時間", "バス停時間", "目的地到着時間", "ルート目安3", "滞在時間"]
+    },
+    6: {
+      name: "宮戸橋時刻表",
+      clear: ["宮戸橋時刻表"],
+      fill: ["ルート目安3"]
+    },
+    7: {
+      name: "カレンダー",
+      clear: ["未完警報"],
+      fill: ["天気1", "天気2", "天気3", "イベントID"]
+    },
+    8: {
+      name: "リカバリー",
+      clear: ["目的地一覧1", "目的地一覧2", "候補", "建物", "電話", "WEB", "祝日", "季節の行事", "アイコン", "未完警報"],
+      fill: ["選択", "PlaceID", "原型", "名前", "郵便", "住所", "建物", "電話", "WEB", "営業時間", "出発日", "祝日", "季節の行事", "アイコン", "出発時間", "バス停時間", "目的地到着時間", "ルート目安1", "ルート目安2", "ルート目安3", "滞在時間", "カレンダー種別", "マスタ", "カレンダー", "天気1", "天気2", "天気3", "イベントID"]
+    }
+  };
+
+
+  let currentBpm = 120;
+  let currentZoom = 100;
+  let isPlaying = false;
+  let isLooping = false;
+  let isEditMode = false; 
+  let historySteps = [];
+  let currentStepIdx = 0;
+  let dateKnobInstance = null;
+
+  function getBeatTime() { return 60000 / currentBpm; }
+  function generateId() { return Math.random().toString(36).substring(2, 9); }
+  function assignIdsToSnapshot(snapshot) {
+    snapshot.columns.forEach(col => { if (!col._id) col._id = generateId(); });
+  }
+
+  function showToast(message) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.innerText = message;
+    container.appendChild(toast);
+    setTimeout(() => { toast.remove(); }, 3000);
+  }
+
+  /* ―― シミュレーター機能（列名ベース） ―― */
+  async function runSimulation(triggerId) {
+    if (isPlaying || isAnimating) {
+      showToast("アニメーション再生中はシミュレーションを実行できません。");
+      return;
+    }
+    
+    const config = ACTION_CONFIG[triggerId];
+    if (!config) return;
+
+    showToast(`シミュレーション開始: ${config.name}`);
+    setButtonsLock(true);
+    
+    const container = document.getElementById('sheet-container');
+    const cols = Array.from(container.querySelectorAll('.sheet-column'));
+    const beat = getBeatTime();
+    const tasks = [];
+
+    // ヘッダー名で対象の列要素を探すヘルパー
+    const getColsByName = (nameArray) => {
+      if (!nameArray) return [];
+      return nameArray.map(name => {
+        return cols.find(col => col.querySelector('.cell-header').innerText === name);
+      }).filter(col => col !== undefined);
+    };
+
+    const clearCols = getColsByName(config.clear);
+    const fillCols = getColsByName(config.fill);
+    const ifClearCols = getColsByName(config.if_clear);
+
+    // アニメーション実行関数（チェックボックス反転）
+    const animateCBs = (targetCols, glowClass, cellGlowClass, setChecked) => {
+      targetCols.forEach(col => {
+        col.classList.add(glowClass);
+        const cbs = col.querySelectorAll('.cell-cb');
+        cbs.forEach(cb => {
+          cb.classList.add(cellGlowClass);
+          tasks.push(new Promise(resolve => {
+            setTimeout(() => {
+              cb.style.transition = `transform ${beat * 0.75}ms ease-in`;
+              cb.style.transform = 'rotateX(90deg)';
+              setTimeout(() => {
+                const input = cb.querySelector('input');
+                input.checked = setChecked;
+                if(setChecked) cb.classList.add('checked'); else cb.classList.remove('checked');
+                cb.style.transition = 'none'; cb.style.transform = 'rotateX(-90deg)';
+                cb.offsetHeight;
+                cb.style.transition = `transform ${beat * 0.75}ms ease-out`;
+                cb.style.transform = 'rotateX(0deg)';
+                setTimeout(() => {
+                   cb.style.transition = `box-shadow ${beat}ms ease-in-out`;
+                   cb.classList.remove(cellGlowClass);
+                   resolve();
+                }, beat * 0.75);
+              }, beat * 0.75);
+            }, beat);
+          }));
+        });
+        
+        setTimeout(() => col.classList.remove(glowClass), beat * 2.5);
+      });
+    };
+
+    animateCBs(clearCols, 'glow-red', 'glow-cell-red', false); // クリアは赤色でOFFに
+    animateCBs(fillCols, 'glow-blue', 'glow-cell-blue', true); // 記入は青色でONに
+    animateCBs(ifClearCols, 'glow-yellow', 'glow-cell-orange', false); // IFクリアは黄色でOFFに
+
+    if (tasks.length > 0) {
+      await Promise.all(tasks);
+    } else {
+      await new Promise(r => setTimeout(r, beat * 1.5)); // 対象列が画面にない場合のウェイト
+    }
+    
+    showToast("シミュレーション完了");
+    setButtonsLock(false);
+  }
+
+  /* 以下、既存のUI・アニメーションロジック */
+  function updatePlayButtonUI() {
+    const designDiv = document.getElementById('play-btn-design');
+    designDiv.innerHTML = ''; 
+
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "css-icon");
+    svg.setAttribute("viewBox", "0 0 24 24");
+
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+
+    if (isLooping) {
+      svg.setAttribute("viewBox", "0 0 24 24");
+      path.setAttribute("d", "M19 8l-4 4h3c0 3.31-2.69 6-6 6-1.01 0-1.97-.25-2.8-.7l-1.46 1.46C8.97 19.54 10.43 20 12 20c4.42 0 8-3.58 8-8h3l-4-4zM6 12c0-3.31 2.69-6 6-6 1.01 0 1.97.25 2.8.7l1.46-1.46C15.03 4.46 13.57 4 12 4c-4.42 0-8 3.58-8 8H1l4 4 4-4H6z");
+    } else if (isPlaying) {
+      path.setAttribute("d", "M6 6h12v12H6z"); 
+    } else {
+      path.setAttribute("d", "M8 5v14l11-7z"); 
+    }
+
+    svg.appendChild(path);
+    designDiv.appendChild(svg);
+
+    if (isLooping) designDiv.classList.add('loop-active');
+    else designDiv.classList.remove('loop-active');
+  }
+
+  function updateLockIconUI() {
+    const shackle = document.getElementById('lock-shackle');
+    const lockText = document.getElementById('btn-lock-text');
+    if (isEditMode) {
+      shackle.setAttribute("d", "M7 8V4a5 5 0 0 1 10 0v1"); 
+      lockText.innerText = 'EDIT';
+    } else {
+      shackle.setAttribute("d", "M7 11V7a5 5 0 0 1 10 0v4"); 
+      lockText.innerText = 'LOCK';
+    }
+  }
+
+  function getCurrentCheckboxState() {
+    const container = document.getElementById('sheet-container');
+    const cols = container.querySelectorAll('.sheet-column');
+    const data = [];
+    cols.forEach(col => {
+      const colName = col.querySelector('.cell-header').innerText;
+      const cbs = Array.from(col.querySelectorAll('.cell-cb input')).map(cb => cb.checked);
+      data.push({ name: colName, cbs: cbs });
+    });
+    return data;
+  }
+
+  function toggleEditMode() {
+    if (isPlaying) { showToast("再生中は編集モードを切り替えられません。"); return; }
+    
+    const editBtn = document.getElementById('btn-edit-mode');
+    const resetBtn = document.getElementById('btn-reset-edit');
+
+    if (!isEditMode) {
+      isEditMode = true;
+      window.originalCbState = JSON.stringify(getCurrentCheckboxState());
+      editBtn.className = 'btn btn-edit';
+      resetBtn.style.display = 'block';
+    } else {
+      const currentStateStr = JSON.stringify(getCurrentCheckboxState());
+      if (window.originalCbState === currentStateStr) {
+        isEditMode = false;
+        editBtn.className = 'btn btn-lock';
+        resetBtn.style.display = 'none';
+        updateLockIconUI();
+        showToast("変更がないため保存をスキップしました。");
+        return;
+      }
+      
+      isEditMode = false;
+      editBtn.className = 'btn btn-saving';
+      resetBtn.style.display = 'none';
+      editBtn.disabled = true;
+      
+      saveCheckboxState(() => {
+        editBtn.className = 'btn btn-lock';
+        editBtn.disabled = false;
+        updateLockIconUI();
+        showToast("チェックボックスの変更を保存しました。");
+      });
+    }
+    updateLockIconUI();
+  }
+
+  function resetEditMode() {
+    if (isPlaying || !isEditMode) return;
+    initSheetWithSnapshot(historySteps[currentStepIdx]);
+    showToast("現在のステップの初期状態にリセットしました。");
+  }
+
+  function saveCheckboxState(callback) {
+    const newData = getCurrentCheckboxState();
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(() => {
+          if(callback) callback();
+          fetchInitialHistory(); 
+        })
+        .withFailureHandler((err) => {
+          console.error(err);
+          showToast("保存に失敗しました。");
+          if(callback) callback();
+        })
+        .saveCheckboxChanges(newData);
+    } else {
+      setTimeout(() => { if(callback) callback(); }, 800); 
+    }
+  }
+
+  let playClickTimer = null;
+  document.getElementById('play-knob').addEventListener('click', (e) => {
+    if (isEditMode) { showToast("EDITモード中は再生できません。"); return; }
+    
+    if (playClickTimer) {
+      clearTimeout(playClickTimer);
+      playClickTimer = null;
+      isLooping = !isLooping;
+      updatePlayButtonUI();
+      showToast(isLooping ? "ループ再生: ON" : "ループ再生: OFF");
+    } else {
+      playClickTimer = setTimeout(() => {
+        playClickTimer = null;
+        if (isPlaying) { stopPlayback(); } 
+        else { startPlayback(); }
+      }, 250);
+    }
+  });
+
+  class KnobController {
+    constructor(elementId, displayId, config) {
+      this.knob = document.getElementById(elementId);
+      this.inner = this.knob.querySelector('.knob-inner');
+      this.display = document.getElementById(displayId);
+      this.min = config.min; 
+      this.max = config.max;
+      this.isInt = config.isInt || false;
+      this.isLoop = config.isLoop || false;
+      this.format = config.format; 
+      this.onApply = config.onApply;
+      this.toggleStates = config.toggleStates;
+      
+      this.currentVal = config.default;
+      this.currentAngle = this.valueToAngle(this.currentVal);
+      this.isDragging = false; this.hasMoved = false; this.lastAngle = 0;
+      this.wheelAccumulator = 0; 
+      this.toggleIdx = this.toggleStates.indexOf(this.currentVal) !== -1 ? this.toggleStates.indexOf(this.currentVal) : 0;
+      
+      this.updateUI(false); 
+      this.bindEvents();
+    }
+    
+    updateConfig(newConfig) {
+      if (newConfig.max !== undefined) this.max = newConfig.max;
+      if (newConfig.min !== undefined) this.min = newConfig.min;
+      this.setValue(this.currentVal); 
+    }
+
+    valueToAngle(val) { return ((val - this.min) / (this.max - this.min || 1)) * 360; }
+    angleToValue(angle) { 
+      let val = this.min + (angle / 360) * (this.max - this.min);
+      return this.isInt ? Math.round(val) : Math.round(val); 
+    }
+
+    updateUI(triggerApply = true) {
+      this.inner.style.transform = `rotate(${this.currentAngle}deg)`;
+      this.display.innerText = this.format(this.currentVal);
+      if (triggerApply && this.onApply && this.previousAppliedVal !== this.currentVal) {
+        this.previousAppliedVal = this.currentVal;
+        this.onApply(this.currentVal);
+      }
+    }
+
+    setValue(newVal, triggerApply = true) {
+      if (this.isLoop) {
+        if (newVal > this.max) newVal = this.min;
+        if (newVal < this.min) newVal = this.max;
+      } else {
+        if (newVal > this.max) newVal = this.max;
+        if (newVal < this.min) newVal = this.min;
+      }
+      if (this.isInt) newVal = Math.round(newVal);
+      this.currentVal = newVal;
+      this.currentAngle = this.valueToAngle(this.currentVal);
+      this.updateUI(triggerApply);
+    }
+
+    bindEvents() {
+      this.knob.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        this.wheelAccumulator += e.deltaY;
+        if (Math.abs(this.wheelAccumulator) > 40) {
+          const step = this.isInt ? 1 : (this.max - this.min) / 40;
+          if (this.wheelAccumulator > 0) this.setValue(this.currentVal + step);
+          else this.setValue(this.currentVal - step);
+          this.wheelAccumulator = 0;
+        }
+      });
+      
+      this.knob.addEventListener('mousedown', (e) => {
+        this.isDragging = true; this.hasMoved = false;
+        const rect = this.knob.getBoundingClientRect();
+        this.centerX = rect.left + rect.width / 2; this.centerY = rect.top + rect.height / 2;
+        this.lastAngle = Math.atan2(e.clientY - this.centerY, e.clientX - this.centerX) * 180 / Math.PI;
+      });
+      
+      window.addEventListener('mousemove', (e) => {
+        if (!this.isDragging) return;
+        this.hasMoved = true;
+        const currentMouseAngle = Math.atan2(e.clientY - this.centerY, e.clientX - this.centerX) * 180 / Math.PI;
+        let delta = currentMouseAngle - this.lastAngle;
+        if (delta > 180) delta -= 360; if (delta < -180) delta += 360;
+        
+        let newAngle = this.currentAngle + delta;
+        if (this.isLoop) {
+          if (newAngle >= 360) newAngle -= 360; if (newAngle < 0) newAngle += 360;
+        } else {
+          if (newAngle > 360) newAngle = 360; if (newAngle < 0) newAngle = 0;
+        }
+        
+        this.currentAngle = newAngle;
+        let rawVal = this.angleToValue(this.currentAngle);
+        if (rawVal !== this.currentVal) {
+          this.currentVal = rawVal;
+          this.updateUI(true);
+        }
+        this.lastAngle = currentMouseAngle;
+      });
+      
+      window.addEventListener('mouseup', () => { this.isDragging = false; });
+      
+      this.knob.addEventListener('click', () => {
+        if (!this.hasMoved) {
+          this.toggleIdx = (this.toggleIdx + 1) % this.toggleStates.length;
+          this.setValue(this.toggleStates[this.toggleIdx]);
+        }
+      });
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', () => {
+    new KnobController('bpm-knob', 'bpm-val', {
+      min: 30, max: 300, default: 120, isInt: true, isLoop: true, toggleStates: [30, 120, 300],
+      format: v => v, onApply: v => { currentBpm = v; document.documentElement.style.setProperty('--beat-time', `${getBeatTime()}ms`); }
+    });
+
+    new KnobController('zoom-knob', 'zoom-val', {
+      min: 20, max: 120, default: 100, isInt: true, isLoop: true, toggleStates: [25, 50, 75, 100, 120],
+      format: v => `${v}%`, onApply: v => { currentZoom = v; document.documentElement.style.setProperty('--zoom-factor', v / 100); }
+    });
+
+    dateKnobInstance = new KnobController('date-knob', 'date-val', {
+      min: 1, max: 1, default: 1, isInt: true, isLoop: true, toggleStates: [1], 
+      format: v => v, 
+      onApply: v => { 
+        if (isPlaying) { showToast("再生中はDATEノブを操作できません。"); return; }
+        if (historySteps.length > 0) {
+          const targetSnapshot = historySteps[v - 1];
+          document.getElementById('date-timestamp-val').innerText = targetSnapshot.timestamp;
+          document.getElementById('play-val').innerText = v;
+          document.getElementById('play-timestamp-val').innerText = targetSnapshot.timestamp;
+          
+          currentStepIdx = v - 1;
+          initSheetWithSnapshot(targetSnapshot);
+        }
+      }
+    });
+  });
+
+  function getColumnLetter(colIndex) {
+    let temp, letter = '';
+    while (colIndex >= 0) {
+      temp = colIndex % 26; letter = String.fromCharCode(temp + 65) + letter;
+      colIndex = (colIndex - temp) / 26 - 1;
+    }
+    return letter;
+  }
+
+  function updateColumnLetters() {
+    document.querySelectorAll('.sheet-column').forEach((col, index) => {
+      let letterDiv = col.querySelector('.col-letter');
+      if (letterDiv) letterDiv.innerText = getColumnLetter(index);
+    });
+  }
+
+  function createColumn(colData) {
+    const col = document.createElement('div'); 
+    col.className = 'sheet-column'; 
+    col.style.perspective = '600px'; 
+    col.dataset.colId = colData._id; 
+    
+    const letter = document.createElement('div'); letter.className = 'col-letter'; col.appendChild(letter);
+    const header = document.createElement('div'); header.className = 'cell-header'; header.innerText = colData.name;
+    if (colData.bg) header.style.backgroundColor = colData.bg; if (colData.fg) header.style.color = colData.fg;
+    col.appendChild(header);
+
+    const rows = colData.cbs ? colData.cbs.length : 18;
+    for (let i = 0; i < rows; i++) {
+      const cell = document.createElement('div'); cell.className = 'cell-cb';
+      const isChecked = colData.cbs ? colData.cbs[i] : false;
+      if (isChecked) cell.classList.add('checked');
+      const input = document.createElement('input'); input.type = 'checkbox'; input.checked = isChecked;
+      
+      input.onclick = (e) => { 
+        if (isPlaying || !isEditMode || isAnimating) { e.preventDefault(); return; }
+        if (e.target.checked) cell.classList.add('checked');
+        else cell.classList.remove('checked');
+      };
+      
+      cell.appendChild(input); col.appendChild(cell);
+    }
+    return col;
+  }
+
+  function findColumnById(id) { return document.querySelector(`.sheet-column[data-col-id="${id}"]`); }
+
+  function doFLIP(container, actionCallback, duration, excludedElements = []) {
+    const firstRects = new Map();
+    Array.from(container.children).forEach(child => firstRects.set(child, child.getBoundingClientRect()));
+    actionCallback();
+    const newChildren = Array.from(container.children);
+    newChildren.forEach(child => {
+      if (excludedElements.includes(child)) return;
+      const firstRect = firstRects.get(child);
+      if (firstRect) {
+        const dx = firstRect.left - child.getBoundingClientRect().left;
+        if (dx !== 0) { child.style.transition = 'none'; child.style.transform = `translateX(${dx}px)`; }
+      }
+    });
+    container.offsetHeight; 
+    newChildren.forEach(child => {
+      if (!excludedElements.includes(child) && firstRects.has(child)) {
+        child.style.transition = `transform ${duration}ms ease-in-out`; child.style.transform = 'none';
+      }
+    });
+    setTimeout(() => {
+      newChildren.forEach(child => {
+        if (!excludedElements.includes(child)) {
+          child.style.transition = `transform var(--beat-time) ease-in-out, box-shadow var(--beat-time) ease-in-out, border-color var(--beat-time) ease-in-out, opacity var(--beat-time) ease-in-out`;
+          child.style.transform = '';
+        }
+      });
+      updateColumnLetters();
+    }, duration);
+  }
+
+  function runBatchDeleteAnimation(colIds) {
+    return new Promise(resolve => {
+      const container = document.getElementById('sheet-container');
+      const targetCols = colIds.map(id => findColumnById(id)).filter(c => c);
+      if (targetCols.length === 0) return resolve();
+      const beat = getBeatTime();
+      targetCols.forEach(col => col.classList.add('glow-red'));
+      setTimeout(() => {
+        targetCols.forEach(col => { col.style.transition = `transform ${beat}ms ease-in, opacity ${beat}ms ease-in`; col.style.transform = 'scale(0)'; col.style.opacity = '0'; });
+        setTimeout(() => { doFLIP(container, () => targetCols.forEach(col => col.style.display = 'none'), beat); setTimeout(() => { targetCols.forEach(col => col.remove()); resolve(); }, beat); }, beat);
+      }, beat);
+    });
+  }
+
+  function runBatchNewAnimation(newCols) {
+    return new Promise(resolve => {
+      const container = document.getElementById('sheet-container');
+      const beat = getBeatTime();
+      const newElements = [];
+      doFLIP(container, () => {
+        const sortedCols = [...newCols].sort((a, b) => a.colIndex - b.colIndex);
+        sortedCols.forEach(item => {
+          const newCol = createColumn(item.colData);
+          newCol.style.transition = 'none'; newCol.style.transform = 'scale(0)'; newCol.style.opacity = '0';
+          newElements.push(newCol);
+          const cols = container.querySelectorAll('.sheet-column');
+          if (item.colIndex < cols.length) cols[item.colIndex].before(newCol); else container.appendChild(newCol); 
+        });
+      }, beat, newElements); 
+      setTimeout(() => {
+        newElements.forEach(newCol => { newCol.style.transition = `transform ${beat}ms cubic-bezier(0.2, 1, 0.3, 1), opacity ${beat}ms ease-out, box-shadow ${beat}ms, border-color ${beat}ms`; newCol.classList.add('glow-blue'); newCol.style.transform = 'scale(1)'; newCol.style.opacity = '1'; });
+        setTimeout(() => { newElements.forEach(newCol => newCol.classList.remove('glow-blue')); setTimeout(resolve, beat); }, beat);
+      }, beat);
+    });
+  }
+
+  function runChangeHeaderAnimation(colId, newTitle) {
+    return new Promise(resolve => {
+      const targetCol = findColumnById(colId);
+      if (!targetCol) return resolve();
+      const targetHeader = targetCol.querySelector('.cell-header');
+      const beat = getBeatTime();
+      targetCol.classList.add('glow-orange');
+      setTimeout(() => {
+        targetHeader.style.transition = `transform ${beat * 0.75}ms ease-in`; targetHeader.style.transform = 'rotateY(90deg)';
+        setTimeout(() => {
+          targetHeader.innerText = newTitle; targetHeader.style.backgroundColor = '#fbd38d'; targetHeader.style.color = '#000';
+          targetHeader.style.transition = 'none'; targetHeader.style.transform = 'rotateY(-90deg)'; targetHeader.offsetHeight;
+          targetHeader.style.transition = `transform ${beat * 0.75}ms ease-out`; targetHeader.style.transform = 'rotateY(0deg)';
+          setTimeout(() => {
+            targetCol.style.transition = `background-color ${beat}ms ease-in-out, color ${beat}ms ease-in-out, box-shadow ${beat}ms ease-in-out, border-color ${beat}ms ease-in-out`;
+            targetHeader.style.transition = `background-color ${beat}ms ease-in-out, color ${beat}ms ease-in-out`;
+            targetCol.offsetHeight; targetHeader.offsetHeight;
+            targetCol.classList.remove('glow-orange'); targetHeader.style.backgroundColor = ''; targetHeader.style.color = '';
+            setTimeout(resolve, beat);
+          }, beat * 0.75);
+        }, beat * 0.75);
+      }, beat);
+    });
+  }
+
+  function runSingleChangeCB(targetCB, isChecked, beat) {
+    return new Promise(resolve => {
+      targetCB.classList.add('glow-cell-orange');
+      setTimeout(() => {
+        targetCB.style.transition = `transform ${beat * 0.75}ms ease-in`; targetCB.style.transform = 'rotateX(90deg)';
+        setTimeout(() => {
+          const input = targetCB.querySelector('input'); input.checked = isChecked;
+          if(isChecked) targetCB.classList.add('checked'); else targetCB.classList.remove('checked');
+          targetCB.style.transition = 'none'; targetCB.style.transform = 'rotateX(-90deg)'; targetCB.offsetHeight;
+          targetCB.style.transition = `transform ${beat * 0.75}ms ease-out`; targetCB.style.transform = 'rotateX(0deg)';
+          setTimeout(() => { targetCB.style.transition = `box-shadow ${beat}ms ease-in-out`; targetCB.offsetHeight; targetCB.classList.remove('glow-cell-orange'); setTimeout(resolve, beat); }, beat * 0.75);
+        }, beat * 0.75);
+      }, beat);
+    });
+  }
+
+  async function syncColumnOrder(stateB) {
+    return new Promise(resolve => {
+      const container = document.getElementById('sheet-container');
+      const targetOrderIds = stateB.columns.map(c => c._id);
+      const currentCols = Array.from(container.children);
+      const moves = [];
+      let maxDiff = 0;
+      
+      for (let i = 0; i < targetOrderIds.length; i++) {
+        const expectedId = targetOrderIds[i];
+        const actualIdx = currentCols.findIndex(c => c.dataset.colId === expectedId);
+        if (actualIdx !== -1 && actualIdx !== i) {
+          const diff = Math.abs(actualIdx - i);
+          if (diff > maxDiff) maxDiff = diff;
+          moves.push({ id: expectedId, col: findColumnById(expectedId), diff: diff, direction: actualIdx > i ? 'left' : 'right' });
+        }
+      }
+      if (moves.length === 0) return resolve();
+
+      const beat = getBeatTime();
+      moves.forEach(m => {
+        const isMain = (maxDiff > 1) ? (m.diff === maxDiff) : true;
+        m.isMain = isMain;
+        if (isMain) {
+          m.col.classList.add('glow-green'); m.col.style.transition = `transform ${beat * 0.5}ms ease-out`;
+          if (m.direction === 'left') { m.col.style.zIndex = '5'; m.col.style.transform = 'scale(0.95)'; } 
+          else { m.col.style.zIndex = '20'; m.col.style.transform = 'scale(1.05)'; }
+        } else { m.col.style.zIndex = '10'; }
+      });
+      Array.from(container.children).forEach(col => { if (!moves.find(m => m.id === col.dataset.colId)) col.style.zIndex = '10'; });
+
+      setTimeout(() => {
+        const firstRects = new Map(); Array.from(container.children).forEach(child => firstRects.set(child, child.getBoundingClientRect()));
+        targetOrderIds.forEach(id => { const col = findColumnById(id); if (col) container.appendChild(col); });
+        const newChildren = Array.from(container.children);
+        newChildren.forEach(child => {
+          const firstRect = firstRects.get(child);
+          if (firstRect) {
+            const dx = firstRect.left - child.getBoundingClientRect().left;
+            if (dx !== 0) {
+              child.style.transition = 'none'; const moveData = moves.find(m => m.id === child.dataset.colId);
+              if (moveData && moveData.isMain) { child.style.transform = `translateX(${dx}px) scale(${moveData.direction === 'left' ? '0.95' : '1.05'})`; } 
+              else { child.style.transform = `translateX(${dx}px)`; }
+            }
+          }
+        });
+        container.offsetHeight; 
+        newChildren.forEach(child => {
+          child.style.transition = `transform ${beat * 1.5}ms ease-in-out`; const moveData = moves.find(m => m.id === child.dataset.colId);
+          if (moveData && moveData.isMain) { child.style.transform = `scale(${moveData.direction === 'left' ? '0.95' : '1.05'})`; } 
+          else { child.style.transform = 'none'; }
+        });
+        setTimeout(() => {
+          moves.forEach(m => { if (m.isMain) { m.col.style.transition = `transform ${beat * 0.5}ms ease-in`; m.col.style.transform = 'scale(1)'; } });
+          setTimeout(() => {
+            Array.from(container.children).forEach(col => {
+              col.classList.remove('glow-green'); col.style.zIndex = '';
+              col.style.transition = `transform var(--beat-time) ease-in-out, box-shadow var(--beat-time) ease-in-out, border-color var(--beat-time) ease-in-out, opacity var(--beat-time) ease-in-out`;
+              col.style.transform = '';
+            }); updateColumnLetters(); resolve();
+          }, beat * 0.5);
+        }, beat * 1.5);
+      }, beat * 0.5);
+    });
+  }
+
+  function generateDiffActions(stateA, stateB) {
+    const actions = [];
+    const colsA = stateA.columns.map((c, i) => ({ ...c, originalIdx: i, matched: false }));
+    const colsB = stateB.columns.map((c, i) => ({ ...c, originalIdx: i, matched: false }));
+    const cbChanges = [];
+
+    for (let i = 0; i < colsA.length; i++) {
+      if (colsA[i].matched) continue;
+      const j = i; 
+      if (j < colsB.length && !colsB[j].matched && colsA[i].name === colsB[j].name && JSON.stringify(colsA[i].cbs) === JSON.stringify(colsB[j].cbs)) {
+        colsA[i].matched = true; colsB[j].matched = true; colsB[j]._id = colsA[i]._id; stateB.columns[j]._id = colsA[i]._id;
+      }
+    }
+    for (let i = 0; i < colsA.length; i++) {
+      if (colsA[i].matched) continue;
+      for (let j = 0; j < colsB.length; j++) {
+        if (!colsB[j].matched && colsA[i].name === colsB[j].name && JSON.stringify(colsA[i].cbs) === JSON.stringify(colsB[j].cbs)) {
+          colsA[i].matched = true; colsB[j].matched = true; colsB[j]._id = colsA[i]._id; stateB.columns[j]._id = colsA[i]._id; break;
+        }
+      }
+    }
+    for (let i = 0; i < colsA.length; i++) {
+      if (colsA[i].matched) continue;
+      const j = i;
+      if (j < colsB.length && !colsB[j].matched && colsA[i].name === colsB[j].name) {
+        colsA[i].matched = true; colsB[j].matched = true; colsB[j]._id = colsA[i]._id; stateB.columns[j]._id = colsA[i]._id;
+        for (let k = 0; k < Math.max(colsA[i].cbs.length, colsB[j].cbs.length); k++) {
+          if (colsA[i].cbs[k] !== colsB[j].cbs[k]) cbChanges.push({ colId: colsB[j]._id, cbIndex: k, checked: colsB[j].cbs[k] });
+        }
+      }
+    }
+    for (let i = 0; i < colsA.length; i++) {
+      if (colsA[i].matched) continue;
+      for (let j = 0; j < colsB.length; j++) {
+        if (!colsB[j].matched && colsA[i].name === colsB[j].name) {
+          colsA[i].matched = true; colsB[j].matched = true; colsB[j]._id = colsA[i]._id; stateB.columns[j]._id = colsA[i]._id;
+          for (let k = 0; k < Math.max(colsA[i].cbs.length, colsB[j].cbs.length); k++) {
+            if (colsA[i].cbs[k] !== colsB[j].cbs[k]) cbChanges.push({ colId: colsB[j]._id, cbIndex: k, checked: colsB[j].cbs[k] });
+          } break;
+        }
+      }
+    }
+    for (let i = 0; i < colsA.length; i++) {
+      if (colsA[i].matched) continue;
+      const j = i;
+      if (j < colsB.length && !colsB[j].matched && JSON.stringify(colsA[i].cbs) === JSON.stringify(colsB[j].cbs)) {
+        colsA[i].matched = true; colsB[j].matched = true; colsB[j]._id = colsA[i]._id; stateB.columns[j]._id = colsA[i]._id;
+        actions.push({ type: 'changeHeader', colId: colsA[i]._id, newTitle: colsB[j].name });
+      }
+    }
+    for (let i = 0; i < colsA.length; i++) {
+      if (colsA[i].matched) continue;
+      for (let j = 0; j < colsB.length; j++) {
+        if (!colsB[j].matched && JSON.stringify(colsA[i].cbs) === JSON.stringify(colsB[j].cbs)) {
+          colsA[i].matched = true; colsB[j].matched = true; colsB[j]._id = colsA[i]._id; stateB.columns[j]._id = colsA[i]._id;
+          actions.push({ type: 'changeHeader', colId: colsA[i]._id, newTitle: colsB[j].name }); break;
+        }
+      }
+    }
+    for (let i = 0; i < colsA.length; i++) {
+      if (colsA[i].matched) continue;
+      const j = i;
+      if (j < colsB.length && !colsB[j].matched) {
+        colsA[i].matched = true; colsB[j].matched = true; colsB[j]._id = colsA[i]._id; stateB.columns[j]._id = colsA[i]._id;
+        if (colsA[i].name !== colsB[j].name) { actions.push({ type: 'changeHeader', colId: colsA[i]._id, newTitle: colsB[j].name }); }
+        for (let k = 0; k < Math.max(colsA[i].cbs.length, colsB[j].cbs.length); k++) {
+          if (colsA[i].cbs[k] !== colsB[j].cbs[k]) cbChanges.push({ colId: colsB[j]._id, cbIndex: k, checked: colsB[j].cbs[k] });
+        }
+      }
+    }
+    colsA.filter(c => !c.matched).forEach(c => actions.push({ type: 'delete', colId: c._id }));
+    colsB.filter(c => !c.matched).forEach(c => {
+      const newId = generateId(); c._id = newId; stateB.columns[c.originalIdx]._id = newId;
+      actions.push({ type: 'new', colIndex: c.originalIdx, colData: stateB.columns[c.originalIdx] });
+    });
+
+    if (cbChanges.length > 0) actions.push({ type: 'batchCB', changes: cbChanges });
+    return actions;
+  }
+
+  function propagateIdsThroughHistory(history) {
+    if (!history || history.length === 0) return;
+    assignIdsToSnapshot(history[0]);
+    for (let i = 0; i < history.length - 1; i++) { generateDiffActions(history[i], history[i + 1]); }
+  }
+
+  function optimizeHistory(history) {
+    if (!history || history.length < 2) return history;
+    const optimized = [history[0]];
+    
+    for (let i = 1; i < history.length; i++) {
+      let curr = history[i];
+      const prev = optimized[optimized.length - 1];
+      const actions = generateDiffActions(prev, curr);
+      const timeDiff = curr.timestampMs - prev.timestampMs;
+      
+      const isSameOrder = prev.columns.length === curr.columns.length && prev.columns.every((c, idx) => c._id === curr.columns[idx]._id);
+      const isOnlyModify = actions.length > 0 && actions.every(a => a.type === 'changeHeader' || a.type === 'batchCB');
+      
+      // ★ 5分以内の変更で、列の増減や移動がなければ、あらゆる名前の変更やCB変更を「直前の状態への上書き」として全吸収する
+      if (timeDiff <= 300000 && isSameOrder && isOnlyModify) {
+         prev.columns.forEach(prevCol => {
+           const currCol = curr.columns.find(c => c._id === prevCol._id);
+           if (currCol) { prevCol.name = currCol.name; prevCol.cbs = currCol.cbs; }
+         });
+         prev.timestamp = curr.timestamp; prev.timestampMs = curr.timestampMs;
+      } else {
+        optimized.push(curr);
+      }
+    }
+    return optimized;
+  }
+
+  function initSheetWithSnapshot(snapshot) {
+    const container = document.getElementById('sheet-container'); container.innerHTML = '';
+    snapshot.columns.forEach(colData => container.appendChild(createColumn(colData)));
+    updateColumnLetters(); 
+  }
+
+  function setButtonsLock(locked) {
+    isAnimating = locked;
+    document.querySelectorAll('.btn, .sim-btn').forEach(b => b.disabled = locked);
+  }
+
+  /* ―― 再生制御 ―― */
+  function startPlayback() {
+    if (historySteps.length < 2) { showToast("再生できる履歴がありません。"); return; }
+    let startIdx = dateKnobInstance.currentVal - 1;
+    if (startIdx >= historySteps.length - 1) {
+      startIdx = 0; dateKnobInstance.setValue(1, false); document.getElementById('date-timestamp-val').innerText = historySteps[0].timestamp;
+    }
+    currentStepIdx = startIdx; isPlaying = true; updatePlayButtonUI();
+    document.getElementById('play-val').innerText = currentStepIdx + 1;
+    document.getElementById('play-timestamp-val').innerText = historySteps[currentStepIdx].timestamp;
+    
+    initSheetWithSnapshot(historySteps[currentStepIdx]);
+    playNextStep();
+  }
+
+  function stopPlayback() {
+    isPlaying = false; updatePlayButtonUI();
+  }
+
+  async function playNextStep() {
+    if (!isPlaying) return; 
+    
+    if (currentStepIdx >= historySteps.length - 1) {
+      if (isLooping) {
+        currentStepIdx = dateKnobInstance.currentVal - 1;
+        initSheetWithSnapshot(historySteps[currentStepIdx]);
+        document.getElementById('play-val').innerText = currentStepIdx + 1;
+        document.getElementById('play-timestamp-val').innerText = historySteps[currentStepIdx].timestamp;
+        setTimeout(playNextStep, 800); return;
+      } else {
+        stopPlayback(); showToast("再生が完了しました。"); setButtonsLock(false); return;
+      }
+    }
+    
+    setButtonsLock(true);
+    const stateA = historySteps[currentStepIdx];
+    const stateB = historySteps[currentStepIdx + 1];
+    
+    document.getElementById('play-val').innerText = currentStepIdx + 2;
+    document.getElementById('play-timestamp-val').innerText = stateB.timestamp;
+
+    const actions = generateDiffActions(stateA, stateB);
+
+    const deleteActions = actions.filter(a => a.type === 'delete').map(a => a.colId);
+    const newActions = actions.filter(a => a.type === 'new');
+    const changeHeaderActions = actions.filter(a => a.type === 'changeHeader');
+    const cbActions = actions.filter(a => a.type === 'batchCB');
+
+    if (deleteActions.length > 0) await runBatchDeleteAnimation(deleteActions);
+
+    const parallelTasks = [];
+    if (changeHeaderActions.length > 0) { parallelTasks.push(...changeHeaderActions.map(a => runChangeHeaderAnimation(a.colId, a.newTitle))); }
+    if (cbActions.length > 0) {
+      cbActions.forEach(batch => {
+        const beat = getBeatTime();
+        const promises = batch.changes.map(chg => {
+          const colEl = findColumnById(chg.colId);
+          if (!colEl) return Promise.resolve();
+          const targetCB = colEl.querySelectorAll('.cell-cb')[chg.cbIndex];
+          return targetCB ? runSingleChangeCB(targetCB, chg.checked, beat) : Promise.resolve();
+        });
+        parallelTasks.push(Promise.all(promises));
+      });
+    }
+    if (parallelTasks.length > 0) await Promise.all(parallelTasks);
+    if (newActions.length > 0) await runBatchNewAnimation(newActions);
+
+    await syncColumnOrder(stateB);
+
+    currentStepIdx++;
+    setTimeout(playNextStep, 0);
+  }
+
+  function processAndPlayHistory(history) {
+    if (!history || history.length === 0) return;
+    let sortedHistory = [...history].sort((a, b) => a.timestampMs - b.timestampMs);
+    propagateIdsThroughHistory(sortedHistory);
+    historySteps = optimizeHistory(sortedHistory);
+    
+    if (dateKnobInstance) { dateKnobInstance.updateConfig({ max: historySteps.length }); }
+    
+    currentStepIdx = 0;
+    document.getElementById('date-timestamp-val').innerText = historySteps[0].timestamp;
+    document.getElementById('play-val').innerText = 1;
+    document.getElementById('play-timestamp-val').innerText = historySteps[0].timestamp;
+    
+    initSheetWithSnapshot(historySteps[0]);
+    updatePlayButtonUI(); updateLockIconUI();
+  }
+
+  function fetchInitialHistory() {
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run.withSuccessHandler(str => { if (str) processAndPlayHistory(JSON.parse(str)); }).getHistoryData(); 
+    } else {
+      processAndPlayHistory(MOCK_HOME_HEADER_HISTORY);
+    }
+  }
+
+  window.onload = fetchInitialHistory;
+
+  const MOCK_HOME_HEADER_HISTORY = [
+    {
+      "timestamp": "2026/07/03 10:00:00",
+      "timestampMs": 1783040400000,
+      "columns": [
+        {"name":"ユニークID","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]},
+        {"name":"目的地一覧1","bg":"#d1e7fd","fg":"#1e3a8a","cbs":[false,false,false]},
+        {"name":"選択","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]},
+        {"name":"名前","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]}
+      ]
+    },
+    {
+      "timestamp": "2026/07/03 10:01:00",
+      "timestampMs": 1783040460000,
+      "columns": [
+        {"name":"ユニークID","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]},
+        {"name":"目的地一覧1","bg":"#d1e7fd","fg":"#1e3a8a","cbs":[false,false,false]},
+        {"name":"選択","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]},
+        {"name":"名前","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]},
+        {"name":"","bg":"#dcfce3","fg":"#1e3a8a","cbs":[false,false,false]}
+      ]
+    },
+    {
+      "timestamp": "2026/07/03 10:01:30",
+      "timestampMs": 1783040490000,
+      "columns": [
+        {"name":"ユニークID","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]},
+        {"name":"目的地一覧1","bg":"#d1e7fd","fg":"#1e3a8a","cbs":[false,false,false]},
+        {"name":"選択","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]},
+        {"name":"名前","bg":"#ffffff","fg":"#000000","cbs":[false,false,false]},
+        {"name":"住所_2","bg":"#dcfce3","fg":"#1e3a8a","cbs":[false,false,false]} // GAS重複リネームの模擬
+      ]
+    }
+  ];
+</script>
+</body>
+</html>

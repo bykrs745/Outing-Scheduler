@@ -14,7 +14,7 @@ function showSidebar() {
   // 今後のHTML分割を見据えてevaluate()を使用します
   const html = HtmlService.createTemplateFromFile('app')
       .evaluate()
-      .setTitle('KAmp Smart Scheduler')
+      .setTitle('外出Scheduler')
       .setWidth(450);
   SpreadsheetApp.getUi().showSidebar(html);
 }
@@ -23,7 +23,7 @@ function doGet() {
   // 今後のHTML分割を見据えてevaluate()を使用します
   return HtmlService.createTemplateFromFile('app')
       .evaluate()
-      .setTitle('KAmp Smart Scheduler')
+      .setTitle('外出Scheduler')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
       .addMetaTag('viewport', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=none');
 }
